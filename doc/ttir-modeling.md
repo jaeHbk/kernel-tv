@@ -135,6 +135,10 @@ The output is a written mapping from bug to required structure, plus a verdict
 on each bug's reality. It decides what sections 2 and 4 have to deliver, so it
 comes first.
 
+The first evidence review is in [`ttir-bug-mechanisms.md`](ttir-bug-mechanisms.md).
+It separates reported GPU bit differences from TTIR semantic differences and
+records which reproduction steps remain open.
+
 ### 3.2 Current reach
 
 The checker validates semantics-preserving pass permutations today. The gates in
