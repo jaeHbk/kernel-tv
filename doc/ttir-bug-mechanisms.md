@@ -84,6 +84,16 @@ mechanism investigation, not three established TTIR semantic bugs. Do not use
 them as section 3.3 success cases until a bit-exact TTIR check or a smaller
 lowering-level probe locates the first semantic divergence.
 
+## Checker implementation status (2026-10-09)
+
+The MLIR-free core now constructs IEEE float constants, performs rounded
+add/sub/mul/div and fused multiply-add, and roundtrips non-NaN values through
+the byte heap. Its tests demonstrate a fixed NaN-versus-Inf accumulator-order
+witness and let Z3 find one from a symbolic finite input. The TTIR binary still uses Abstract mode, and the saved HIT-0007 pair
+cannot yet be interpreted because `tt.dot` and `scf.for` are unsupported.
+Z3 FPA also does not preserve NaN payload bits, so it must not certify exact
+bit equivalence for the three payload-only cases.
+
 ## Next checks
 
 1. Re-run the four archived pass commands with a pinned Triton build and verify

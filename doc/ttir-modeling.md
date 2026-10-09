@@ -208,18 +208,27 @@ Four optional encodings sit beyond it.
 and the real behaviour of subnormals, infinities and NaN. `Types.cpp` already
 maps each float `DType` to its `fpa_sort(expBits, sigBits)` and `Memory.cpp`
 already converts between the raw byte representation and that sort, so the
-plumbing exists. This is the encoding that can decide `ttir-broad/HIT-0007` and
-the three parked TTIR reports, whose entire content is which special value came
-out. The solver pays for it: `bin/triton-tv.cpp` carries two FPA commutativity
-checks that print their own solve time, which is the cheapest available
-measurement of the gap.
+plumbing exists. This encoding can distinguish the NaN-versus-Inf result in
+`ttir-broad/HIT-0007`. It cannot decide the three parked payload-only reports:
+Z3 FPA does not retain individual NaN payloads. The solver pays for FPA:
+`bin/triton-tv.cpp` carries two FPA commutativity checks that print their own
+solve time, which is the cheapest available measurement of the gap.
+
+Implementation note (2026-10-09): the core now supports FPA constants,
+add/sub/mul/div, and fused multiply-add. A CPU-only regression asks Z3 to find
+an accumulator-order counterexample. The `triton-tv` binary still selects
+Abstract; `tt.dot` and `scf.for` are not yet interpreted. The payload-only
+reports need a payload-aware bitvector encoding or an explicit `UNKNOWN`
+result.
 
 *Axiom profiles on top of Abstract.* Adding associativity as an axiom makes
-reassociating transformations provably equivalent; withholding it makes them
-`NOT EQUIVALENT`. The same switch decides whether a difference confined to a
-NaN payload or to the sign of a zero counts, which is the question that left the
-three TTIR reports parked. Two profiles are wanted, exact bit-to-bit and
-reassociation-allowed, selected by the flag in section 1.
+reassociating transformations provably equivalent; withholding it can make the
+abstract formulas differ. A different expression tree can be SAT in this
+underconstrained model without a concrete floating-point witness. Two profiles
+are wanted, exact bit-to-bit and reassociation-allowed, selected by the flag in
+section 1. The exact-bit profile also needs a payload-aware representation of
+NaNs; an associativity switch alone does not provide one. Under the chosen
+exact-bit policy, payload-only differences count as mismatches once modeled.
 
 *Real.* An FP value becomes a rational and the operations become exact
 arithmetic over it. Reassociation and the algebraic identities hold by

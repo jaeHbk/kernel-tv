@@ -25,9 +25,9 @@ using Shape = std::vector<int64_t>;
 // a pointer kernel argument — onto a MemId; the core never sees source IR.
 enum class MemId : uint32_t {};
 
-// Floating-point encoding strategy (pluggable). Only Abstract is implemented;
-// Real / IntegerRange / FPA are placeholders (see tv/doc/kernel-tv-design.md
-// §"FP encoding modes").
+// Floating-point encoding strategy (pluggable). Abstract is the validator
+// default. FPA supports constants and basic arithmetic in the core; Real and
+// IntegerRange remain placeholders. FPA does not preserve NaN payload bits.
 enum class FPMode { Abstract, Real, IntegerRange, FPA };
 
 // Byte width of a scalar type as laid out in the byte-addressable heap.

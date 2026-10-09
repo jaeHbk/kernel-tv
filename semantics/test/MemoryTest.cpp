@@ -303,4 +303,22 @@ TEST(Memory, LargeTileWitnessEquivalence) {
   EXPECT_EQ(solver.check(), z3::sat) << "differing big stores must be detected";
 }
 
+TEST(Memory, FpaSignedZeroByteRoundtrip) {
+  z3::context ctx;
+  Memory m(ctx, FPMode::FPA, "mem_fpa_zero");
+  auto ptrs = makePtrTile(ctx, DType::Ptr, 0x5000, 4, {1});
+  auto mask = makeMaskTile(ctx, true, {1});
+  z3::expr i = ctx.bv_const("fpa_i", 32);
+  z3::expr bits = ctx.bv_val(0x80000000u, 32);
+  z3::expr negZero = bits.mk_from_ieee_bv(ctx.fpa_sort(8, 24));
+  Tensor vals{z3::lambda(i, negZero), {1}, DType::F32, std::nullopt};
+
+  m.store(ptrs, vals, mask);
+  Tensor loaded = m.load(ptrs, mask, vals);
+  z3::solver solver(ctx);
+  solver.add(z3::select(loaded.e, ctx.bv_val(0, 32)).mk_to_ieee_bv() !=
+             bits);
+  EXPECT_EQ(solver.check(), z3::unsat);
+}
+
 int main() { return simpletest::runAll(); }

@@ -32,8 +32,12 @@ static bool isFloat(DType ty) {
 //   pointer                    -> pass through (already BitVec(64))
 static z3::expr toBV(z3::context &ctx, z3::expr val, DType ty, FPMode mode) {
   if (isFloat(ty)) {
-    if (mode == FPMode::FPA)
+    if (mode == FPMode::FPA) {
+      // Z3's FP sort does not retain the payload of a NaN. This conversion is
+      // suitable for class-level witnesses (NaN vs Inf), not a proof that two
+      // programs write identical NaN payload bits.
       return z3::expr(ctx, Z3_mk_fpa_to_ieee_bv(ctx, val));
+    }
     return val; // Abstract / IntegerRange: already BitVec(width)
   }
   if (ty == DType::I1)

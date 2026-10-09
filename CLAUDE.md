@@ -29,10 +29,13 @@ and the eval suite green.
   `z3::lambda`** heap update; `checkEquivalence` compares at a **symbolic witness
   address** (`select(m1,w) != select(m2,w)`), NOT array extensionality — the
   latter returns `unknown`. (`semantics/Memory.*`, `semantics/Equivalence.*`)
-- **FP = Abstract mode only**: each FP value is an opaque `BitVec` id; ops are
-  uninterpreted Z3 functions with **only 5 axioms** (5 reserved consts distinct;
-  add/mul/max commutative; neg involutive). Deliberately no associativity, no
-  NaN propagation, no zero identities. `lt`/`le` throw. (`semantics/AbstractFp.*`)
+- **Validator FP = Abstract mode**: each FP value is an opaque `BitVec` id;
+  ops are uninterpreted Z3 functions with **only 5 axioms** (5 reserved consts
+  distinct; add/mul/max commutative; neg involutive). Deliberately no
+  associativity, NaN propagation, or zero identities. `lt`/`le` throw.
+  (`semantics/AbstractFp.*`) The MLIR-free core now has partial FPA support
+  for constants, add/sub/mul/div, and fused multiply-add; the binary does not
+  select it yet. Z3 FPA does not retain NaN payload bits.
 - **Ops modeled**: `arith` constant/addi/subi/muli/andi/extsi/cmpi(10 preds)/
   addf/subf/mulf/divf/maxnumf; `math.exp`; `tt.` get_program_id/make_range/splat/
   addptr(scalar **and** tile)/load/store (both **require a mask**)/reduce

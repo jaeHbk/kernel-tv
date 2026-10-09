@@ -145,7 +145,10 @@ Scalar Context::constInt(int64_t v, DType ty) {
 
 Scalar Context::constFloatBits(uint64_t ieeeBits, DType ty) {
   unsigned bw = getByteWidth(ty) * 8;
-  return Scalar{z_.bv_val(ieeeBits, bw), ty};
+  z3::expr bits = z_.bv_val(ieeeBits, bw);
+  if (mode_ == FPMode::FPA)
+    return Scalar{bits.mk_from_ieee_bv(getElemSort(z_, ty, mode_)), ty};
+  return Scalar{bits, ty};
 }
 
 Tensor Context::denseIntTile(const std::vector<int64_t> &values, DType elem,
@@ -171,7 +174,10 @@ Tensor Context::denseFloatTile(const std::vector<uint64_t> &ieeeBits,
       z_.constant("__dense_fp_base", z_.array_sort(z_.bv_sort(32), elemSort));
   unsigned idx = 0;
   for (uint64_t bits : ieeeBits) {
-    arr = z3::store(arr, z_.bv_val(idx, 32), z_.bv_val(bits, bw));
+    z3::expr value = z_.bv_val(bits, bw);
+    if (mode_ == FPMode::FPA)
+      value = value.mk_from_ieee_bv(elemSort);
+    arr = z3::store(arr, z_.bv_val(idx, 32), value);
     ++idx;
   }
   return Tensor{arr, shape, elem, std::nullopt};
@@ -191,6 +197,11 @@ Tensor Context::iota(int64_t start, const Shape &shape, DType elem) {
 Value Context::add(const Value &a, const Value &b) {
   DType elem = elemTypeOf(a);
   if (isFloat(elem)) {
+    if (mode_ == FPMode::FPA)
+      return applyBinaryOp(z_, a, b,
+                           [](z3::expr x, z3::expr y) { return x + y; });
+    if (mode_ != FPMode::Abstract)
+      throw std::logic_error("add: unsupported FP mode");
     AbstractFp &afp = fpReg_.get(elem);
     return applyBinaryOp(z_, a, b,
                          [&](z3::expr x, z3::expr y) { return afp.add(x, y); });
@@ -201,6 +212,11 @@ Value Context::add(const Value &a, const Value &b) {
 Value Context::sub(const Value &a, const Value &b) {
   DType elem = elemTypeOf(a);
   if (isFloat(elem)) {
+    if (mode_ == FPMode::FPA)
+      return applyBinaryOp(z_, a, b,
+                           [](z3::expr x, z3::expr y) { return x - y; });
+    if (mode_ != FPMode::Abstract)
+      throw std::logic_error("sub: unsupported FP mode");
     AbstractFp &afp = fpReg_.get(elem);
     return applyBinaryOp(z_, a, b,
                          [&](z3::expr x, z3::expr y) { return afp.sub(x, y); });
@@ -211,6 +227,11 @@ Value Context::sub(const Value &a, const Value &b) {
 Value Context::mul(const Value &a, const Value &b) {
   DType elem = elemTypeOf(a);
   if (isFloat(elem)) {
+    if (mode_ == FPMode::FPA)
+      return applyBinaryOp(z_, a, b,
+                           [](z3::expr x, z3::expr y) { return x * y; });
+    if (mode_ != FPMode::Abstract)
+      throw std::logic_error("mul: unsupported FP mode");
     AbstractFp &afp = fpReg_.get(elem);
     return applyBinaryOp(z_, a, b,
                          [&](z3::expr x, z3::expr y) { return afp.mul(x, y); });
@@ -222,15 +243,28 @@ Value Context::div(const Value &a, const Value &b) {
   DType elem = elemTypeOf(a);
   if (!isFloat(elem))
     throw std::logic_error("div: only float division is modeled");
+  if (mode_ == FPMode::FPA)
+    return applyBinaryOp(z_, a, b,
+                         [](z3::expr x, z3::expr y) { return x / y; });
+  if (mode_ != FPMode::Abstract)
+    throw std::logic_error("div: unsupported FP mode");
   AbstractFp &afp = fpReg_.get(elem);
   return applyBinaryOp(z_, a, b,
                        [&](z3::expr x, z3::expr y) { return afp.div(x, y); });
+}
+
+Scalar Context::fma(const Scalar &a, const Scalar &b, const Scalar &c) {
+  if (mode_ != FPMode::FPA || !isFloat(a.ty) || a.ty != b.ty || a.ty != c.ty)
+    throw std::logic_error("fma: requires matching float types in FPA mode");
+  return Scalar{z3::fma(a.e, b.e, c.e, z_.fpa_rounding_mode()), a.ty};
 }
 
 Value Context::maxnum(const Value &a, const Value &b) {
   DType elem = elemTypeOf(a);
   if (!isFloat(elem))
     throw std::logic_error("maxnum: only float maxnum is modeled");
+  if (mode_ != FPMode::Abstract)
+    throw std::logic_error("maxnum: unsupported FP mode");
   AbstractFp &afp = fpReg_.get(elem);
   return applyBinaryOp(z_, a, b,
                        [&](z3::expr x, z3::expr y) { return afp.max(x, y); });
@@ -295,6 +329,8 @@ Value Context::exp(const Value &a) {
   DType elem = elemTypeOf(a);
   if (!isFloat(elem))
     throw std::logic_error("exp: only float exp is modeled");
+  if (mode_ != FPMode::Abstract)
+    throw std::logic_error("exp: unsupported FP mode");
   AbstractFp &afp = fpReg_.get(elem);
   if (auto *sc = std::get_if<Scalar>(&a))
     return Scalar{afp.exp(sc->e), elem};

@@ -5,8 +5,8 @@
 //
 // A Context is the single object a builder (per-language adapter) talks to when
 // it models a program onto the core. It owns the Z3 context, the chosen FP
-// encoding (FpModel; today AbstractFp = mode a via AbstractFpRegistry), and the
-// FPMode. Every op-EXPRESSION body lives here as a pure Z3 method; a builder
+// encoding (AbstractFp through a registry, or selected FPA operations), and
+// the FPMode. Every op-EXPRESSION body lives here as a pure Z3 method; a builder
 // handler only reads its own IR operands, maps types to DType, calls the
 // matching Context method, and binds the result. The core never sees MLIR.
 //
@@ -39,9 +39,8 @@ public:
 
   z3::context &z3() { return z_; }
   FPMode mode() const { return mode_; }
-  // The FP model for this run (mode a = AbstractFp). Builders call this only to
-  // emit accumulated axioms before solver.check(); float ops route through the
-  // Context methods below, not here.
+  // Abstract FP registry. Builders call this only to emit accumulated axioms
+  // before solver.check(); float ops route through Context methods below.
   AbstractFpRegistry &fp() { return fpReg_; }
 
   //--- symbolic inputs -----------------------------------------------------//
@@ -64,7 +63,8 @@ public:
   // Scalar integer constant. i1 is a Bool; other widths are BitVec(width).
   Scalar constInt(int64_t v, DType ty);
 
-  // Scalar float constant carried as its IEEE bit pattern (BitVec(width)).
+  // Scalar float constant from IEEE bits. FPA converts the bits to a Z3 FP
+  // value; Abstract keeps them as an opaque BitVec(width) tag.
   Scalar constFloatBits(uint64_t ieeeBits, DType ty);
 
   // Splat a scalar into a tensor of `shape`.
@@ -90,6 +90,8 @@ public:
   Value sub(const Value &a, const Value &b);    // subi / subf
   Value mul(const Value &a, const Value &b);    // muli / mulf
   Value div(const Value &a, const Value &b);    // divf (float only)
+  // One rounded multiply-add. Currently available only in FPA mode.
+  Scalar fma(const Scalar &a, const Scalar &b, const Scalar &c);
   Value maxnum(const Value &a, const Value &b); // maxnumf (float only)
   Value exp(const Value &a);                    // math.exp (float only)
 
