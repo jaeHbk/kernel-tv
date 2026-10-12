@@ -84,15 +84,21 @@ mechanism investigation, not three established TTIR semantic bugs. Do not use
 them as section 3.3 success cases until a bit-exact TTIR check or a smaller
 lowering-level probe locates the first semantic divergence.
 
-## Checker implementation status (2026-10-09)
+## Checker implementation status (2026-10-12)
 
 The MLIR-free core now constructs IEEE float constants, performs rounded
-add/sub/mul/div and fused multiply-add, and roundtrips non-NaN values through
-the byte heap. Its tests demonstrate a fixed NaN-versus-Inf accumulator-order
-witness and let Z3 find one from a symbolic finite input. The TTIR binary still uses Abstract mode, and the saved HIT-0007 pair
-cannot yet be interpreted because `tt.dot` and `scf.for` are unsupported.
-Z3 FPA also does not preserve NaN payload bits, so it must not certify exact
-bit equivalence for the three payload-only cases.
+add/sub/mul/div and fused multiply-add, models an ordered FMA dot and the 2-D
+shape operations used by this case, and roundtrips non-NaN values through the
+byte heap. Its tests demonstrate both a scalar and a small matrix
+NaN-versus-Inf accumulator-order witness. The TTIR adapter now has code for
+bounded static `scf.for`, `tt.dot`, `tt.expand_dims`, `tt.broadcast`, and signed
+division/remainder, plus CLI flags for the FP and ordered-dot policy. These
+adapter changes have not been compiled or run: this machine lacks a built
+Triton/MLIR checkout. The binary conservatively returns `UNKNOWN` for FPA
+results until exact output bits can be validated. Z3 FPA does not preserve NaN
+payloads, so it must not certify exact bit equivalence for the three
+payload-only cases. The focused sequence and resource boundary are recorded in
+[`ttir-hit0007-checkpoint.md`](ttir-hit0007-checkpoint.md).
 
 ## Next checks
 

@@ -9,6 +9,9 @@ namespace Semantics {
 State handleTtGetProgramId(const State &s, mlir::Operation *op);
 State handleTtMakeRange(const State &s, mlir::Operation *op);
 State handleTtSplat(const State &s, mlir::Operation *op);
+State handleTtExpandDims(const State &s, mlir::Operation *op);
+State handleTtBroadcast(const State &s, mlir::Operation *op);
+State handleTtDot(const State &s, mlir::Operation *op);
 State handleTtAddPtr(const State &s, mlir::Operation *op);
 State handleTtLoad(const State &s, mlir::Operation *op);
 State handleTtStore(const State &s, mlir::Operation *op);

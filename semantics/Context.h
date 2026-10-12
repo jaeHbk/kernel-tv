@@ -90,6 +90,8 @@ public:
   Value sub(const Value &a, const Value &b);    // subi / subf
   Value mul(const Value &a, const Value &b);    // muli / mulf
   Value div(const Value &a, const Value &b);    // divf (float only)
+  Value divSigned(const Value &a, const Value &b); // divsi
+  Value remSigned(const Value &a, const Value &b); // remsi
   // One rounded multiply-add. Currently available only in FPA mode.
   Scalar fma(const Scalar &a, const Scalar &b, const Scalar &c);
   Value maxnum(const Value &a, const Value &b); // maxnumf (float only)
@@ -112,6 +114,16 @@ public:
 
   // Splat a scalar pointer into a pointer tile, carrying its MemId provenance.
   Tensor splatPtr(const Ptr &p, const Shape &shape);
+
+  // Row-major tensor views. expandDims inserts a unit axis; broadcast maps
+  // each output index back to the corresponding input index.
+  Tensor expandDims(const Tensor &src, unsigned axis);
+  Tensor broadcast(const Tensor &src, const Shape &shape);
+
+  // Ordered matrix contraction: each output starts at c[m,n] and consumes
+  // k=0..K-1 via a rounded FMA. This is an explicit IEEE-FMA policy; callers
+  // must reject dot precision modes whose lowering is not known to match it.
+  Tensor dotFma(const Tensor &a, const Tensor &b, const Tensor &c);
 
   // Scalar pointer + scalar offset: newPtr = ptr + sizeof(pointee) * offset.
   Ptr addPtr(const Ptr &ptr, const Scalar &off);

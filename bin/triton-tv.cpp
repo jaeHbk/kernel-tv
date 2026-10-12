@@ -8,6 +8,7 @@
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Parser/Parser.h"
@@ -17,6 +18,8 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <chrono>
+#include <set>
+#include <string>
 #include <utility>
 #include <vector>
 #include <z3++.h>
@@ -28,6 +31,19 @@ static llvm::cl::opt<std::string>
 static llvm::cl::opt<std::string>
     inputFile2(llvm::cl::Positional, llvm::cl::desc("<second input mlir file>"),
                llvm::cl::Required);
+
+static llvm::cl::opt<std::string> fpModeOption(
+    "fp-mode", llvm::cl::desc("Floating-point model: abstract or fpa"),
+    llvm::cl::init("abstract"));
+
+static llvm::cl::opt<bool> assumeDotOrderedFma(
+    "assume-dot-ordered-fma",
+    llvm::cl::desc("Conditionally model tt.dot as ascending-K rounded FMA"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<unsigned> timeoutMs(
+    "timeout-ms", llvm::cl::desc("Z3 timeout in ms (0 = unlimited)"),
+    llvm::cl::init(0));
 
 /// Parse an MLIR file and return the module.
 static mlir::OwningOpRef<mlir::ModuleOp>
@@ -177,8 +193,62 @@ static mlir::triton::FuncOp extractFunc(mlir::ModuleOp mod) {
   return result;
 }
 
+static bool hasUnsupportedOp(mlir::triton::FuncOp func, bool fpa,
+                             bool allowOrderedDot) {
+  static const std::set<std::string> supported = {
+      "tt.func", "tt.return", "tt.get_program_id", "tt.make_range",
+      "tt.splat", "tt.expand_dims", "tt.broadcast", "tt.dot",
+      "tt.addptr", "tt.load", "tt.store", "tt.reduce", "tt.reduce.return",
+      "scf.for", "scf.yield", "arith.constant", "arith.addi",
+      "arith.subi", "arith.muli", "arith.divsi", "arith.remsi",
+      "arith.andi", "arith.extsi", "arith.cmpi", "arith.addf",
+      "arith.subf", "arith.mulf", "arith.divf", "arith.maxnumf",
+      "math.exp"};
+  bool unsupported = false;
+  auto constantInteger = [](mlir::Value value, int64_t &out) {
+    mlir::Operation *def = value.getDefiningOp();
+    if (!def || def->getName().getStringRef() != "arith.constant")
+      return false;
+    auto attr = def->getAttrOfType<mlir::IntegerAttr>("value");
+    if (!attr)
+      return false;
+    out = attr.getInt();
+    return true;
+  };
+  func.walk([&](mlir::Operation *op) {
+    std::string name = op->getName().getStringRef().str();
+    if (!supported.count(name) ||
+        (name == "tt.dot" && (!fpa || !allowOrderedDot)) ||
+        (fpa && (name == "arith.maxnumf" || name == "math.exp"))) {
+      llvm::errs() << "UNKNOWN: unsupported operation or FP policy: "
+                   << name << "\n";
+      unsupported = true;
+    }
+    if (name == "scf.for") {
+      int64_t lb, ub, step;
+      if (!constantInteger(op->getOperand(0), lb) ||
+          !constantInteger(op->getOperand(1), ub) ||
+          !constantInteger(op->getOperand(2), step) || step <= 0 ||
+          (ub > lb && (ub - lb - 1) / step + 1 > 64)) {
+        llvm::errs() << "UNKNOWN: scf.for needs at most 64 static iterations\n";
+        unsupported = true;
+      }
+    }
+  });
+  return unsupported;
+}
+
 int main(int argc, char **argv) {
   llvm::cl::ParseCommandLineOptions(argc, argv, "MLIR Translation Validator\n");
+
+  if (fpModeOption != "abstract" && fpModeOption != "fpa") {
+    llvm::errs() << "UNKNOWN: --fp-mode must be abstract or fpa\n";
+    return 2;
+  }
+  if (assumeDotOrderedFma && fpModeOption != "fpa") {
+    llvm::errs() << "UNKNOWN: ordered FMA dot requires --fp-mode=fpa\n";
+    return 2;
+  }
 
   mlir::DialectRegistry registry;
   registerTritonDialects(registry);
@@ -205,6 +275,10 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  if (hasUnsupportedOp(func1, fpModeOption == "fpa", assumeDotOrderedFma) ||
+      hasUnsupportedOp(func2, fpModeOption == "fpa", assumeDotOrderedFma))
+    return 2;
+
   llvm::outs() << "Validating: " << func1.getName() << " vs " << func2.getName()
                << "\n";
 
@@ -213,6 +287,11 @@ int main(int argc, char **argv) {
   //--------------------------------------------------------------------------
   z3::context ctx;
   z3::solver solver(ctx);
+  if (timeoutMs > 0) {
+    z3::params params(ctx);
+    params.set("timeout", timeoutMs);
+    solver.set(params);
+  }
 
   auto srcArgs = func1.getBody().getArguments();
   auto tgtArgs = func2.getBody().getArguments();
@@ -226,8 +305,14 @@ int main(int argc, char **argv) {
   // z3::context so program-ID and FP function symbols are shared across the two
   // programs — exactly the pre-M0 behavior (which used two AbstractFpRegistry
   // objects on one z3::context).
-  kernel_smt::Context srcCtx(ctx, Semantics::FPMode::Abstract);
-  kernel_smt::Context tgtCtx(ctx, Semantics::FPMode::Abstract);
+  auto mode = fpModeOption == "fpa" ? Semantics::FPMode::FPA
+                                       : Semantics::FPMode::Abstract;
+  kernel_smt::Context srcCtx(ctx, mode);
+  kernel_smt::Context tgtCtx(ctx, mode);
+
+  if (assumeDotOrderedFma)
+    llvm::outs() << "Assumption: tt.dot uses ascending-K rounded FMA; "
+                    "this is a lowering check, not a TTIR contract proof.\n";
 
   Semantics::State s1 = Semantics::State::initFromFunc(srcArgs, srcCtx, "src");
   Semantics::State s2 = Semantics::State::initFromFunc(tgtArgs, tgtCtx, "tgt");
@@ -305,9 +390,19 @@ int main(int argc, char **argv) {
                << " s\n";
 
   if (result == z3::unsat) {
+    if (mode == Semantics::FPMode::FPA) {
+      llvm::outs() << "UNKNOWN: FPA cannot prove exact NaN payload equality\n";
+      return 2;
+    }
     llvm::outs() << "EQUIVALENT\n";
     return 0;
   } else if (result == z3::sat) {
+    if (mode == Semantics::FPMode::FPA) {
+      llvm::outs() << "UNKNOWN: possible FPA divergence; exact output bits "
+                      "need concrete validation\n";
+      llvm::outs() << solver.get_model().to_string().c_str() << "\n";
+      return 2;
+    }
     llvm::outs() << "NOT EQUIVALENT — counterexample found\n";
     llvm::outs() << solver.get_model().to_string().c_str() << "\n";
     return 1;

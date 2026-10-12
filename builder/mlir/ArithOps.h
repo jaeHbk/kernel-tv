@@ -10,6 +10,8 @@ State handleArithConstant(const State &s, mlir::Operation *op);
 State handleArithAddi(const State &s, mlir::Operation *op);
 State handleArithSubi(const State &s, mlir::Operation *op);
 State handleArithMuli(const State &s, mlir::Operation *op);
+State handleArithDivsi(const State &s, mlir::Operation *op);
+State handleArithRemsi(const State &s, mlir::Operation *op);
 State handleArithAndi(const State &s, mlir::Operation *op);
 State handleArithExtsi(const State &s, mlir::Operation *op);
 State handleArithCmpi(const State &s, mlir::Operation *op);

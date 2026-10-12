@@ -253,6 +253,20 @@ Value Context::div(const Value &a, const Value &b) {
                        [&](z3::expr x, z3::expr y) { return afp.div(x, y); });
 }
 
+Value Context::divSigned(const Value &a, const Value &b) {
+  if (isFloat(elemTypeOf(a)) || elemTypeOf(a) == DType::I1)
+    throw std::logic_error("divSigned: expected integer operands");
+  return applyBinaryOp(z_, a, b,
+                       [](z3::expr x, z3::expr y) { return z3::sdiv(x, y); });
+}
+
+Value Context::remSigned(const Value &a, const Value &b) {
+  if (isFloat(elemTypeOf(a)) || elemTypeOf(a) == DType::I1)
+    throw std::logic_error("remSigned: expected integer operands");
+  return applyBinaryOp(z_, a, b,
+                       [](z3::expr x, z3::expr y) { return z3::srem(x, y); });
+}
+
 Scalar Context::fma(const Scalar &a, const Scalar &b, const Scalar &c) {
   if (mode_ != FPMode::FPA || !isFloat(a.ty) || a.ty != b.ty || a.ty != c.ty)
     throw std::logic_error("fma: requires matching float types in FPA mode");
@@ -352,6 +366,62 @@ Tensor Context::splat(const Scalar &s, const Shape &shape) {
 Tensor Context::splatPtr(const Ptr &p, const Shape &shape) {
   z3::expr i = z_.bv_const("__si", 32);
   return Tensor{z3::lambda(i, p.e), shape, DType::Ptr, p.base};
+}
+
+Tensor Context::expandDims(const Tensor &src, unsigned axis) {
+  if (axis > src.shape.size())
+    throw std::logic_error("expandDims: axis out of range");
+  Shape shape = src.shape;
+  shape.insert(shape.begin() + axis, 1);
+  // Inserting a unit dimension does not change row-major linear indices.
+  return Tensor{src.e, shape, src.elem, src.ptrBase};
+}
+
+Tensor Context::broadcast(const Tensor &src, const Shape &shape) {
+  if (src.shape.size() != shape.size())
+    throw std::logic_error("broadcast: rank mismatch");
+  for (size_t d = 0; d < shape.size(); ++d)
+    if (src.shape[d] != 1 && src.shape[d] != shape[d])
+      throw std::logic_error("broadcast: incompatible dimensions");
+
+  z3::expr i = z_.bv_const("__broadcast_i", 32);
+  z3::expr srcIndex = z_.bv_val(0, 32);
+  uint64_t outStride = 1;
+  uint64_t inStride = 1;
+  for (size_t d = shape.size(); d-- > 0;) {
+    if (src.shape[d] != 1) {
+      z3::expr coord = z3::urem(z3::udiv(i, z_.bv_val(outStride, 32)),
+                               z_.bv_val(shape[d], 32));
+      srcIndex = srcIndex + coord * z_.bv_val(inStride, 32);
+    }
+    outStride *= static_cast<uint64_t>(shape[d]);
+    inStride *= static_cast<uint64_t>(src.shape[d]);
+  }
+  return Tensor{z3::lambda(i, z3::select(src.e, srcIndex)), shape,
+                src.elem, src.ptrBase};
+}
+
+Tensor Context::dotFma(const Tensor &a, const Tensor &b, const Tensor &c) {
+  if (mode_ != FPMode::FPA || a.shape.size() != 2 || b.shape.size() != 2 ||
+      c.shape.size() != 2 || !isFloat(a.elem) || a.elem != b.elem ||
+      a.elem != c.elem || a.shape[1] != b.shape[0] ||
+      c.shape[0] != a.shape[0] || c.shape[1] != b.shape[1] ||
+      a.shape[1] < 1 || b.shape[1] < 1)
+    throw std::logic_error("dotFma: requires compatible rank-2 FP tiles in FPA mode");
+
+  const uint64_t kExtent = static_cast<uint64_t>(a.shape[1]);
+  const uint64_t nExtent = static_cast<uint64_t>(b.shape[1]);
+  z3::expr i = z_.bv_const("__dot_i", 32);
+  z3::expr row = z3::udiv(i, z_.bv_val(nExtent, 32));
+  z3::expr col = z3::urem(i, z_.bv_val(nExtent, 32));
+  z3::expr acc = z3::select(c.e, i);
+  for (uint64_t k = 0; k < kExtent; ++k) {
+    z3::expr ai = row * z_.bv_val(kExtent, 32) + z_.bv_val(k, 32);
+    z3::expr bi = z_.bv_val(k * nExtent, 32) + col;
+    acc = z3::fma(z3::select(a.e, ai), z3::select(b.e, bi), acc,
+                  z_.fpa_rounding_mode());
+  }
+  return Tensor{z3::lambda(i, acc), c.shape, c.elem, std::nullopt};
 }
 
 Ptr Context::addPtr(const Ptr &ptr, const Scalar &off) {

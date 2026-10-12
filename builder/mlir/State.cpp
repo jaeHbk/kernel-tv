@@ -11,6 +11,7 @@
 #include "llvm/Support/ErrorHandling.h"
 
 #include <optional>
+#include <vector>
 
 using namespace Semantics;
 
@@ -102,6 +103,12 @@ State State::interpretOp(mlir::Operation *op) const {
     return handleTtMakeRange(*this, op);
   if (opName == "tt.splat")
     return handleTtSplat(*this, op);
+  if (opName == "tt.expand_dims")
+    return handleTtExpandDims(*this, op);
+  if (opName == "tt.broadcast")
+    return handleTtBroadcast(*this, op);
+  if (opName == "tt.dot")
+    return handleTtDot(*this, op);
   if (opName == "tt.addptr")
     return handleTtAddPtr(*this, op);
   if (opName == "tt.load")
@@ -120,6 +127,10 @@ State State::interpretOp(mlir::Operation *op) const {
     return handleArithSubi(*this, op);
   if (opName == "arith.muli")
     return handleArithMuli(*this, op);
+  if (opName == "arith.divsi")
+    return handleArithDivsi(*this, op);
+  if (opName == "arith.remsi")
+    return handleArithRemsi(*this, op);
   if (opName == "arith.andi")
     return handleArithAndi(*this, op);
   if (opName == "arith.extsi")
@@ -170,13 +181,50 @@ State State::interpretIf(mlir::Operation *op) const {
 }
 
 State State::interpretFor(mlir::Operation *op) const {
-  // Plan — Strategy A (static unrolling):
-  //   auto forOp = llvm::cast<mlir::scf::ForOp>(op);
-  //   // Require lb, ub, step to be constant integers.
-  //   // Thread state through (ub - lb) / step copies of the body,
-  //   // substituting the induction variable at each iteration.
-  (void)op;
-  llvm_unreachable("interpretFor: not yet implemented");
+  assert(op->getNumRegions() == 1 && op->getNumOperands() >= 3);
+  auto constantBound = [&](mlir::Value value) -> int64_t {
+    auto expr = std::get<Scalar>(env.lookup(value)).e.simplify();
+    int64_t result;
+    if (!Z3_get_numeral_int64(ctx, expr, &result))
+      llvm_unreachable("scf.for: symbolic bounds need a different loop model");
+    return result;
+  };
+
+  int64_t lb = constantBound(op->getOperand(0));
+  int64_t ub = constantBound(op->getOperand(1));
+  int64_t step = constantBound(op->getOperand(2));
+  if (step <= 0 || (ub > lb && (ub - lb - 1) / step + 1 > 64))
+    llvm_unreachable("scf.for: invalid or excessive static trip count");
+
+  mlir::Block &body = op->getRegion(0).front();
+  assert(body.getNumArguments() == op->getNumOperands() - 2);
+  assert(body.back().getName().getStringRef() == "scf.yield");
+  mlir::Operation &yieldOp = body.back();
+  assert(yieldOp.getNumOperands() == op->getNumResults());
+
+  std::vector<Value> carried;
+  for (unsigned j = 0; j < op->getNumResults(); ++j)
+    carried.push_back(env.lookup(op->getOperand(j + 3)));
+
+  std::optional<State> current;
+  current.emplace(*this);
+  for (int64_t iv = lb; iv < ub; iv += step) {
+    current->env.bind(body.getArgument(0),
+                      context.constInt(iv, dtypeOf(body.getArgument(0).getType())));
+    for (unsigned j = 0; j < carried.size(); ++j)
+      current->env.bind(body.getArgument(j + 1), carried[j]);
+    for (mlir::Operation &bodyOp : body) {
+      if (&bodyOp == &yieldOp)
+        break;
+      current.emplace(current->interpretOp(&bodyOp));
+    }
+    carried.clear();
+    for (mlir::Value value : yieldOp.getOperands())
+      carried.push_back(current->env.lookup(value));
+  }
+  for (unsigned j = 0; j < carried.size(); ++j)
+    current->env.bind(op->getResult(j), carried[j]);
+  return std::move(*current);
 }
 
 State State::interpretWhile(mlir::Operation *op) const {

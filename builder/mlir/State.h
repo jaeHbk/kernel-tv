@@ -92,12 +92,12 @@ public:
   State interpretBlock(mlir::Block &block) const;
 
 private:
-  // Control flow handlers — framework stubs, concrete semantics deferred.
+  // Control flow handlers. Only bounded, static scf.for is implemented.
 
   // scf.if: execute both branches from *this; merge with z3::ite on condition.
   State interpretIf(mlir::Operation *op) const;
 
-  // scf.for — static unrolling (deferred).
+  // scf.for — static unrolling, including loop-carried values.
   State interpretFor(mlir::Operation *op) const;
 
   // scf.while — deferred.

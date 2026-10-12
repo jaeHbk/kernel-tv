@@ -373,4 +373,52 @@ TEST(Context, FpaFindsAccumulatorOrderCounterexample) {
   EXPECT_EQ(solver.check(), z3::sat);
 }
 
+TEST(Context, SignedDivisionAndRemainder) {
+  z3::context z;
+  Context ctx(z, FPMode::Abstract);
+  Scalar a = ctx.constInt(-7, DType::I32);
+  Scalar b = ctx.constInt(3, DType::I32);
+  auto q = std::get<Scalar>(ctx.divSigned(a, b));
+  auto r = std::get<Scalar>(ctx.remSigned(a, b));
+  z3::solver solver(z);
+  solver.add(q.e != z.bv_val(-2, 32) || r.e != z.bv_val(-1, 32));
+  EXPECT_EQ(solver.check(), z3::unsat);
+}
+
+TEST(Context, ExpandAndBroadcastRows) {
+  z3::context z;
+  Context ctx(z, FPMode::Abstract);
+  Tensor row = ctx.iota(10, Shape{2}, DType::I32);
+  Tensor expanded = ctx.expandDims(row, 0);
+  Tensor tiled = ctx.broadcast(expanded, Shape{3, 2});
+  Tensor column = ctx.expandDims(row, 1);
+  Tensor tiledColumns = ctx.broadcast(column, Shape{2, 3});
+  EXPECT_EQ(expanded.shape, (Shape{1, 2}));
+  EXPECT_EQ(tiled.shape, (Shape{3, 2}));
+  z3::solver solver(z);
+  solver.add(at(tiled, 4) != z.bv_val(10, 32) ||
+             at(tiled, 5) != z.bv_val(11, 32) ||
+             at(tiledColumns, 2) != z.bv_val(10, 32) ||
+             at(tiledColumns, 3) != z.bv_val(11, 32));
+  EXPECT_EQ(solver.check(), z3::unsat);
+}
+
+TEST(Context, DotFmaAccumulatorPlacementChangesClass) {
+  z3::context z;
+  Context ctx(z, FPMode::FPA);
+  Tensor a = ctx.denseFloatTile({0x7f400000u, 0x7f400000u},
+                                DType::F32, Shape{1, 2});
+  Tensor b = ctx.denseFloatTile({0x3f800000u, 0x3f800000u},
+                                DType::F32, Shape{2, 1});
+  Tensor zero = ctx.splatConst(ctx.constFloatBits(0, DType::F32), Shape{1, 1});
+  Tensor negInf = ctx.splatConst(
+      ctx.constFloatBits(0xff800000u, DType::F32), Shape{1, 1});
+  Tensor reference = std::get<Tensor>(ctx.add(ctx.dotFma(a, b, zero), negInf));
+  Tensor candidate = ctx.dotFma(a, b, negInf);
+  z3::solver solver(z);
+  solver.add(!at(reference, 0).mk_is_nan() ||
+             !at(candidate, 0).mk_is_inf());
+  EXPECT_EQ(solver.check(), z3::unsat);
+}
+
 int main() { return simpletest::runAll(); }

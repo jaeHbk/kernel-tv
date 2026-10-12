@@ -214,12 +214,13 @@ Z3 FPA does not retain individual NaN payloads. The solver pays for FPA:
 `bin/triton-tv.cpp` carries two FPA commutativity checks that print their own
 solve time, which is the cheapest available measurement of the gap.
 
-Implementation note (2026-10-09): the core now supports FPA constants,
-add/sub/mul/div, and fused multiply-add. A CPU-only regression asks Z3 to find
-an accumulator-order counterexample. The `triton-tv` binary still selects
-Abstract; `tt.dot` and `scf.for` are not yet interpreted. The payload-only
-reports need a payload-aware bitvector encoding or an explicit `UNKNOWN`
-result.
+Implementation note (2026-10-12): the core now supports FPA constants,
+add/sub/mul/div, fused multiply-add, and a conditional ordered-FMA matrix dot.
+CPU-only regressions establish the accumulator-order counterexample. The TTIR
+adapter has new dot and static-loop code but has not been built against Triton
+on this machine. The binary's FPA mode reports `UNKNOWN` until exact output
+bits are validated; payload-only reports still need a payload-aware encoding.
+The [HIT-0007 checkpoint](ttir-hit0007-checkpoint.md) tracks this one path.
 
 *Axiom profiles on top of Abstract.* Adding associativity as an axiom makes
 reassociating transformations provably equivalent; withholding it can make the

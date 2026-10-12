@@ -125,6 +125,22 @@ State Semantics::handleArithMuli(const State &s, mlir::Operation *op) {
   return next;
 }
 
+State Semantics::handleArithDivsi(const State &s, mlir::Operation *op) {
+  Value lhs = s.env.lookup(op->getOperand(0));
+  Value rhs = s.env.lookup(op->getOperand(1));
+  State next = s;
+  next.env.bind(op->getResult(0), s.context.divSigned(lhs, rhs));
+  return next;
+}
+
+State Semantics::handleArithRemsi(const State &s, mlir::Operation *op) {
+  Value lhs = s.env.lookup(op->getOperand(0));
+  Value rhs = s.env.lookup(op->getOperand(1));
+  State next = s;
+  next.env.bind(op->getResult(0), s.context.remSigned(lhs, rhs));
+  return next;
+}
+
 State Semantics::handleArithAndi(const State &s, mlir::Operation *op) {
   Value lhs = s.env.lookup(op->getOperand(0));
   Value rhs = s.env.lookup(op->getOperand(1));

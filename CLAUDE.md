@@ -34,16 +34,20 @@ and the eval suite green.
   distinct; add/mul/max commutative; neg involutive). Deliberately no
   associativity, NaN propagation, or zero identities. `lt`/`le` throw.
   (`semantics/AbstractFp.*`) The MLIR-free core now has partial FPA support
-  for constants, add/sub/mul/div, and fused multiply-add; the binary does not
-  select it yet. Z3 FPA does not retain NaN payload bits.
+  for constants, add/sub/mul/div, fused multiply-add, and an ordered FMA dot.
+  The binary now has an FPA switch, but its adapter changes are not yet built
+  against Triton; FPA verdicts remain UNKNOWN pending bit-exact replay. Z3 FPA
+  does not retain NaN payload bits.
 - **Ops modeled**: `arith` constant/addi/subi/muli/andi/extsi/cmpi(10 preds)/
   addf/subf/mulf/divf/maxnumf; `math.exp`; `tt.` get_program_id/make_range/splat/
   addptr(scalar **and** tile)/load/store (both **require a mask**)/reduce
   (combine-region fold, **1-D single-operand only**).
-- **Not modeled**: control flow (`scf.if/for/while` are `llvm_unreachable`),
-  `tt.call` (rely on `-inline`), `tt.dot`, multi-dim reduce, `arith.cmpf`,
+- **Not modeled**: `scf.if/while`, `tt.call` (rely on `-inline`), multi-dim
+  reduce, `arith.cmpf`,
   `arith.select`, most casts, all `math.*` except `exp`. An unmodeled op is a
-  **hard crash**, not a graceful "unsupported" verdict (to fix in M1).
+  **hard crash**, not a graceful "unsupported" verdict (to fix in M1). The
+  binary now preflights unknown op names, but many invalid shapes/policies can
+  still fail inside handlers.
 - **Practical note**: proving EQUIVALENCE (UNSAT) is fast even at 1024 elems;
   proving NON-equivalence (SAT) is much harder — use **small tiles** for
   inequality cases.

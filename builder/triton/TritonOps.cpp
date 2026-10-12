@@ -5,6 +5,7 @@
 #include "semantics/Memory.h"
 
 #include "mlir/IR/Block.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Region.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
@@ -90,6 +91,37 @@ State Semantics::handleTtSplat(const State &s, mlir::Operation *op) {
   return next;
 }
 
+State Semantics::handleTtExpandDims(const State &s, mlir::Operation *op) {
+  auto axisAttr = op->getAttrOfType<mlir::IntegerAttr>("axis");
+  assert(axisAttr && "tt.expand_dims: missing axis");
+  auto &src = std::get<Tensor>(s.env.lookup(op->getOperand(0)));
+  State next = s;
+  next.env.bind(op->getResult(0),
+                s.context.expandDims(src, axisAttr.getInt()));
+  return next;
+}
+
+State Semantics::handleTtBroadcast(const State &s, mlir::Operation *op) {
+  auto &src = std::get<Tensor>(s.env.lookup(op->getOperand(0)));
+  auto resultTy = llvm::cast<mlir::RankedTensorType>(op->getResult(0).getType());
+  kernel_smt::Shape shape(resultTy.getShape().begin(), resultTy.getShape().end());
+  State next = s;
+  next.env.bind(op->getResult(0), s.context.broadcast(src, shape));
+  return next;
+}
+
+State Semantics::handleTtDot(const State &s, mlir::Operation *op) {
+  // The command line must opt into the ordered-FMA lowering assumption before
+  // reaching this handler. TTIR's inputPrecision alone does not fix an exact
+  // summation order, so this is a conditional check of that lowering policy.
+  auto &a = std::get<Tensor>(s.env.lookup(op->getOperand(0)));
+  auto &b = std::get<Tensor>(s.env.lookup(op->getOperand(1)));
+  auto &c = std::get<Tensor>(s.env.lookup(op->getOperand(2)));
+  State next = s;
+  next.env.bind(op->getResult(0), s.context.dotFma(a, b, c));
+  return next;
+}
+
 //===----------------------------------------------------------------------===//
 // tt.addptr
 //===----------------------------------------------------------------------===//
@@ -151,8 +183,11 @@ State Semantics::handleTtLoad(const State &s, mlir::Operation *op) {
       return std::get<Tensor>(s.env.lookup(otherVal));
     // Default other: zero (or false for i1).
     z3::sort elemSort = getElemSort(s.ctx, elem, s.fpMode);
-    z3::expr zero = elemSort.is_bool() ? s.ctx.bool_val(false)
-                                       : s.ctx.bv_val(0, elemSort.bv_size());
+    z3::expr zero = elemSort.is_bool()
+                        ? s.ctx.bool_val(false)
+                        : elemSort.is_fpa()
+                              ? s.context.constFloatBits(0, elem).e
+                              : s.ctx.bv_val(0, elemSort.bv_size());
     z3::expr i = s.ctx.bv_const("__lo_i", 32);
     return Tensor{z3::lambda(i, zero), shape, elem, std::nullopt};
   }();
